@@ -4,21 +4,24 @@ import multer from "multer";
 import { v2 as cloudinary } from "cloudinary";
 import dotenv from "dotenv";
 import streamifier from "streamifier";
-import path from 'path';
-import { fileURLToPath } from 'url';
 
 dotenv.config({ path: ".env.local" });
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-
 app.use(cors());
 app.use(express.json());
-// Servir frontend desde la carpeta public
-app.use(express.static(path.join(__dirname, '../public')));
 
 const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const upload = multer({
+  storage,
+  limits: { fileSize: 5 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    if (!file.mimetype.startsWith("image/")) {
+      return cb(new Error("Solo se permiten imágenes"));
+    }
+    cb(null, true);
+  }
+});
 
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -26,8 +29,16 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, message: "Backend funcionando" });
+});
+
 app.post("/api/upload", upload.single("imagen"), async (req, res) => {
   try {
+    if (!req.file) {
+      return res.status(400).json({ error: "No se recibió ninguna imagen" });
+    }
+
     const result = await new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         { folder: "curso-web-vercel" },
@@ -38,15 +49,16 @@ app.post("/api/upload", upload.single("imagen"), async (req, res) => {
       );
       streamifier.createReadStream(req.file.buffer).pipe(uploadStream);
     });
-    res.json({ message: "Imagen subida", url: result.secure_url });
+
+    res.json({
+      message: "Imagen subida correctamente",
+      public_id: result.public_id,
+      url: result.secure_url
+    });
   } catch (error) {
-    res.status(500).json({ error: "Error al subir" });
+    console.error(error);
+    res.status(500).json({ error: "Error al subir la imagen" });
   }
 });
-
-const PORT = process.env.PORT || 3000;
-if (process.env.NODE_ENV !== 'production') {
-  app.listen(PORT, () => console.log(`Servidor local en http://localhost:${PORT}`));
-}
 
 export default app;
